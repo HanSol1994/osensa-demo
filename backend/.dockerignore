@@ -1,0 +1,17 @@
+# Keep credentials and local clutter out of the build context entirely — anything
+# copied into an image is recoverable from it.
+.env
+.env.*
+!.env.example
+
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+tests/
+tools/

@@ -1,0 +1,61 @@
+# One-command local stack: broker + kitchen.
+#
+#   docker compose up --build
+#   cd frontend && npm install && npm run dev
+#
+# The frontend is intentionally not containerised — it is a static app whose whole
+# development value is Vite's hot reload, which a container only gets in the way of.
+# Its default broker URL (ws://localhost:9001/mqtt) already matches this stack, so
+# no .env is needed to run locally.
+#
+# If you would rather not use Docker at all, `python -m tools.dev_broker` starts an
+# equivalent pure-Python broker with a WebSocket listener.
+
+services:
+  broker:
+    image: eclipse-mosquitto:2
+    container_name: restaurant-broker
+    ports:
+      - "1883:1883" # MQTT over TCP (mosquitto_sub, debugging)
+      - "9001:9001" # MQTT over WebSockets (the browser)
+    volumes:
+      # Anonymous dev config so this works with no setup step. The authenticated,
+      # ACL-restricted config a real deployment needs is deploy/mosquitto.conf —
+      # swap the line below and mount a password file to use it.
+      - ./deploy/mosquitto.dev.conf:/mosquitto/config/mosquitto.conf:ro
+      # - ./deploy/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      # - ./deploy/mosquitto.acl:/mosquitto/config/mosquitto.acl:ro
+      # - ./deploy/mosquitto.passwd:/mosquitto/config/mosquitto.passwd:ro
+    healthcheck:
+      # mosquitto_sub exits non-zero if it cannot connect, which is exactly the
+      # liveness question worth asking.
+      test: ["CMD", "mosquitto_sub", "-p", "1883", "-t", "$$SYS/#", "-C", "1", "-W", "3"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  kitchen:
+    build:
+      context: ./backend
+    container_name: restaurant-kitchen
+    depends_on:
+      broker:
+        condition: service_healthy
+    environment:
+      # `broker` is the compose service name, resolved by Docker's internal DNS.
+      RESTAURANT_BROKER_HOST: broker
+      RESTAURANT_BROKER_PORT: "9001"
+      RESTAURANT_BROKER_TRANSPORT: websockets
+      RESTAURANT_BROKER_WS_PATH: /mqtt
+      RESTAURANT_BROKER_USE_TLS: "false"
+      RESTAURANT_TABLE_COUNT: "4"
+      RESTAURANT_COOK_MIN_SECONDS: "10"
+      RESTAURANT_COOK_MAX_SECONDS: "30"
+      # text is easier to read when tailing `docker compose logs`; json is the
+      # default and the right choice anywhere logs are collected.
+      RESTAURANT_LOG_FORMAT: text
+      RESTAURANT_LOG_STATE_SNAPSHOTS: "true"
+      RESTAURANT_ENABLE_RESET: "true"
+    restart: unless-stopped

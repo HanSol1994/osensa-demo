@@ -1,0 +1,42 @@
+# Topic authorization. This file is the security boundary of the system.
+#
+# Read docs/SECURITY.md §2 for what each line prevents. The short version: without
+# these rules any client that can connect could publish a retained
+# `restaurant/table/1/state` and make every browser display food that was never
+# cooked — without the backend being involved at all.
+#
+# Mosquitto syntax notes:
+#   `topic`   — literal filter, applies to the preceding `user` block
+#   `pattern` — global, and supports %c (client id) and %u (username) substitution
+#   read = subscribe, write = publish
+
+# --- Global patterns ----------------------------------------------------------
+# Each client may subscribe to its OWN error inbox and no one else's. %c expands to
+# the connecting client's MQTT client id. Granting `restaurant/client/+/err`
+# instead would turn a private channel into a broadcast one.
+pattern read restaurant/client/%c/err
+
+# --- The kitchen --------------------------------------------------------------
+# The only identity allowed to publish state. That exclusivity is what makes the
+# retained state topics trustworthy.
+user kitchen
+topic write restaurant/table/+/state
+topic write restaurant/kitchen/status
+topic write restaurant/client/+/err
+topic read  restaurant/table/+/order
+topic read  restaurant/kitchen/reset
+
+# --- The public web client ----------------------------------------------------
+# Its credentials ship in the JavaScript bundle and are therefore public, so this
+# identity is deliberately near-powerless: it may ask for food and watch the
+# result. It CANNOT write state — that is the line that matters.
+user web-client
+topic write restaurant/table/+/order
+topic read  restaurant/table/+/state
+topic read  restaurant/kitchen/status
+
+# DEMO ONLY. This lets the "Reset all" button work from the browser, which makes a
+# walkthrough far easier. It is a destructive, unauthenticated command available to
+# anyone who loads the page — delete this line for any deployment that matters, and
+# set RESTAURANT_ENABLE_RESET=false as the second layer.
+topic write restaurant/kitchen/reset

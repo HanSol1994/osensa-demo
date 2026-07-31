@@ -1,0 +1,70 @@
+# systemd unit for running the kitchen on a Linux host (a VM, or an embedded
+# industrial controller) instead of a container platform.
+#
+# Install:
+#   sudo cp deploy/restaurant-kitchen.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now restaurant-kitchen
+#   journalctl -u restaurant-kitchen -f
+#
+# The service writes structured JSON to stdout, which journald captures, so
+# `journalctl -u restaurant-kitchen -o cat | jq` gives queryable logs with no log
+# shipping agent.
+
+[Unit]
+Description=Restaurant kitchen (MQTT event consumer)
+Documentation=https://github.com/OWNER/osensa-restaurant
+# network-online rather than network: the process dials the broker at startup, and
+# `network.target` only means the stack is configured, not that it is reachable.
+# The supervised reconnect loop would recover anyway, but starting cleanly is nicer
+# than starting with a failure in the log.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kitchen
+Group=kitchen
+WorkingDirectory=/opt/restaurant
+
+# Broker host and credentials live here, root-owned and 0600. Keeping them out of
+# the unit file means the unit can be committed and the secrets cannot.
+EnvironmentFile=/etc/restaurant/kitchen.env
+
+ExecStart=/opt/restaurant/.venv/bin/python -m restaurant
+
+# The reconnect loop handles a broker outage internally, so a restart here means
+# the process actually died. Always restart, with a delay so a crash loop does not
+# spin the CPU.
+Restart=always
+RestartSec=3s
+# SIGTERM is handled: the kitchen cancels cooking tasks and publishes OFFLINE while
+# still connected, rather than leaving the broker to fire the Last Will.
+KillSignal=SIGTERM
+TimeoutStopSec=15s
+
+# --- Hardening ----------------------------------------------------------------
+# This process is a pure outbound MQTT client. It listens on nothing, needs no
+# capabilities, and writes no files — so it is given none of those things.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Outbound TCP only; no unix sockets or exotic families required.
+RestrictAddressFamilies=AF_INET AF_INET6
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
