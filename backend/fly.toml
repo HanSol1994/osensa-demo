@@ -1,44 +1,41 @@
-# Fly.io config for the kitchen service.
+# fly.toml app configuration file generated for osensa-demo on 2026-07-31T05:26:18Z
 #
-# Note what is absent: there is no [http_service] and no exposed port. The kitchen
-# is an MQTT client that dials out to the broker, so it needs no inbound
-# networking. That also means Fly's HTTP health checks do not apply — liveness is
-# visible in the logs (`broker_connected`) and, to clients, in the retained
-# kitchen status topic backed by the MQTT Last Will.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app = "osensa-restaurant-kitchen"
-primary_region = "ams"  # close to the eu HiveMQ cluster; keeps round trips short
+app = 'osensa-demo'
+primary_region = 'ams'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
-# Non-secret configuration. Anything identifying or authenticating the broker is
-# set with `fly secrets set` instead, so it stays out of the repository.
+[deploy]
+  strategy = 'immediate'
+
 [env]
-  RESTAURANT_BROKER_PORT = "8884"
-  RESTAURANT_BROKER_TRANSPORT = "websockets"
-  RESTAURANT_BROKER_WS_PATH = "/mqtt"
-  RESTAURANT_BROKER_USE_TLS = "true"
+  RESTAURANT_BROKER_PORT = '8884'
+  RESTAURANT_BROKER_TRANSPORT = 'websockets'
+  RESTAURANT_BROKER_USE_TLS = 'true'
+  RESTAURANT_BROKER_WS_PATH = '/mqtt'
+  RESTAURANT_COOK_MAX_SECONDS = '30'
+  RESTAURANT_COOK_MIN_SECONDS = '10'
+  RESTAURANT_ENABLE_RESET = 'true'
+  RESTAURANT_LOG_FORMAT = 'json'
+  RESTAURANT_LOG_LEVEL = 'INFO'
+  RESTAURANT_LOG_STATE_SNAPSHOTS = 'true'
+  RESTAURANT_TABLE_COUNT = '4'
 
-  RESTAURANT_TABLE_COUNT = "4"
-  RESTAURANT_COOK_MIN_SECONDS = "10"
-  RESTAURANT_COOK_MAX_SECONDS = "30"
-
-  RESTAURANT_LOG_FORMAT = "json"
-  RESTAURANT_LOG_LEVEL = "INFO"
-  RESTAURANT_LOG_STATE_SNAPSHOTS = "true"
-
-  # Demo affordance. Turn off if this is ever pointed at something that matters.
-  RESTAURANT_ENABLE_RESET = "true"
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'
+  cpu_kind = 'shared'
   cpus = 1
-
-# Exactly one machine. Two kitchens on the same broker would both consume the
-# order topic and each order would be cooked twice — the in-memory store means
-# there is no shared state to coordinate through. Horizontal scaling would need
-# MQTT shared subscriptions plus the persistence work in docs/FUTURE-WORK.md.
-[deploy]
-  strategy = "immediate"
+  memory_mb = 256
