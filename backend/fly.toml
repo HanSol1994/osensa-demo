@@ -1,4 +1,6 @@
-# Fly.io config for the kitchen service.
+# fly.toml app configuration file for osensa-demo
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 # Note what is deliberately ABSENT: there is no [http_service] and no exposed
 # port. The kitchen is an MQTT client that dials out to the broker; it listens on
@@ -10,7 +12,8 @@
 #   2. With auto_stop_machines and min_machines_running = 0, Fly stops the machine
 #      whenever no HTTP traffic arrives — which, for a worker that never receives
 #      HTTP, means always.
-# If you re-run `fly launch`, delete the generated http_service block again.
+# `fly launch` has re-added that block once already, via a pull request. If it
+# happens again, delete it again.
 #
 # Liveness is visible in the logs (`broker_connected`) and, to clients, through the
 # retained kitchen status topic backed by the MQTT Last Will.
