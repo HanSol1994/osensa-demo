@@ -89,6 +89,13 @@ jobs:
         run: npm audit --audit-level=high
         continue-on-error: true
 
+      # Repo-wide rather than frontend-specific, but this job already has Node set
+      # up. Invisible control bytes have caused two real bugs here, and neither was
+      # visible on inspection — so it is a machine check, not a review convention.
+      - name: Check for raw control bytes
+        working-directory: .
+        run: node scripts/check-control-bytes.mjs
+
   deploy-backend:
     name: Deploy kitchen to Fly.io
     # Both halves gate both deploys. They share a wire contract, so shipping one

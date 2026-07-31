@@ -65,11 +65,14 @@ class of mistake returning.
 **Diagnosis.** Dumped the line's character codes: the file contained raw `0x00`,
 `0x1F` and `0x7F` bytes rather than escape sequences.
 
-**Fix.** Replaced with `\u` escapes, and wrote a small scanner that fails on any raw
-control byte in the tree. Test data that needs control characters now builds them with
-`String.fromCharCode`, so the source stays plain ASCII.
+**Fix.** Replaced with `\u` escapes, and added
+[`scripts/check-control-bytes.mjs`](../scripts/check-control-bytes.mjs), which fails on
+any raw control byte in a tracked file and runs in CI. Test data that needs control
+characters now builds them with `String.fromCharCode`, so the source stays plain ASCII.
 
-**Lesson.** "Looks right" is not a check when the characters are invisible.
+**Lesson.** "Looks right" is not a check when the characters are invisible — it has to be
+a machine check, not a review convention. Proven by the fact that this very document
+later shipped with a raw NUL byte in the paragraph above, which the scanner caught.
 
 ### A5 Two log fields on one line disagreed about the same instant
 
