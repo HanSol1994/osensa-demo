@@ -1,10 +1,25 @@
-# fly.toml app configuration file generated for osensa-demo on 2026-07-31T05:38:57Z
+# fly.toml app configuration file for osensa-demo
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
+# Note what is deliberately ABSENT: there is no [http_service] and no exposed
+# port. The kitchen is an MQTT client that dials out to the broker; it listens on
+# nothing.
+#
+# `fly launch` adds an http_service by default, which breaks this app in two ways:
+#   1. Fly health-checks the internal port, gets no listener, and reboots the
+#      machine in a loop.
+#   2. With auto_stop_machines and min_machines_running = 0, Fly stops the machine
+#      whenever no HTTP traffic arrives — which, for a worker that never receives
+#      HTTP, means always.
+# `fly launch` has re-added that block once already, via a pull request. If it
+# happens again, delete it again.
+#
+# Liveness is visible in the logs (`broker_connected`) and, to clients, through the
+# retained kitchen status topic backed by the MQTT Last Will.
 
 app = 'osensa-demo'
-primary_region = 'ams'
+primary_region = 'ams'  # close to the eu HiveMQ cluster; keeps round trips short
 
 [build]
   dockerfile = 'Dockerfile'
@@ -12,6 +27,12 @@ primary_region = 'ams'
 [deploy]
   strategy = 'immediate'
 
+# Non-secret configuration only. Anything that identifies or authenticates against
+# the broker is set with `fly secrets set`, so it never enters the repository:
+#   RESTAURANT_BROKER_HOST, RESTAURANT_BROKER_USERNAME, RESTAURANT_BROKER_PASSWORD
+#
+# RESTAURANT_BROKER_HOST defaults to "localhost" when unset, so a missing secret
+# shows up as "[Errno 111] Connection refused" rather than as a config error.
 [env]
   RESTAURANT_BROKER_PORT = '8884'
   RESTAURANT_BROKER_TRANSPORT = 'websockets'
@@ -25,14 +46,21 @@ primary_region = 'ams'
   RESTAURANT_LOG_STATE_SNAPSHOTS = 'true'
   RESTAURANT_TABLE_COUNT = '4'
 
-[http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = 'stop'
-  auto_start_machines = true
-  min_machines_running = 0
-  processes = ['app']
-
+# Exactly one machine — and note that this [[vm]] block does NOT enforce that. It
+# describes machine *size*; the count is separate state on Fly's side, and Fly
+# creates two by default. Enforce it with:
+#
+#     fly scale count 1 -a osensa-demo
+#
+# Two instances is not merely wasteful, it is a hard failure. Both connect with the
+# same MQTT client identifier, and brokers evict an existing session when a
+# duplicate id connects — so the two machines kick each other off in a loop, every
+# few seconds, forever. Even if they had distinct ids they would both consume the
+# order topic and cook every order twice, because the in-memory store gives them
+# nothing to coordinate through.
+#
+# Scaling out for real needs MQTT shared subscriptions plus the persistence work in
+# docs/FUTURE-WORK.md.
 [[vm]]
   size = 'shared-cpu-1x'
   memory = '256mb'

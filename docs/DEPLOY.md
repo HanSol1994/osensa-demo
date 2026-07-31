@@ -7,7 +7,7 @@ first.
 | --- | --- | --- |
 | MQTT broker | HiveMQ Cloud (free tier) | Gives `wss://` with a valid certificate, auth, and per-credential topic permissions. Getting TLS right on a self-hosted broker is the single most time-expensive part of this otherwise. |
 | Kitchen (Python) | Fly.io | Needs a long-running process, not a serverless function. Render's free web tier sleeps; Fly keeps a small machine up. |
-| Frontend (Svelte) | Cloudflare Pages | Static build output. Free, instant, and global. |
+| Frontend (Svelte) | GitHub Pages | Static build output, and the repository is already here. No extra account and no API tokens — the workflow authenticates with the built-in `GITHUB_TOKEN` via OIDC, which removes three secrets compared with an external host. |
 
 Self-hosting the broker instead is fully supported — see
 [deploy/mosquitto.conf](../deploy/mosquitto.conf),
@@ -48,7 +48,7 @@ walkthrough, and say so out loud rather than leaving it undocumented.
 
 ```bash
 cd backend
-fly launch --no-deploy --copy-config --name osensa-restaurant-kitchen
+fly launch --no-deploy --copy-config --name osensa-demo
 ```
 
 Set the broker identity as secrets so none of it lands in git:
@@ -84,32 +84,45 @@ Then `restaurant_state` snapshots follow every transition.
 - **Exactly one machine.** Two kitchens on one broker would both consume the order
   topic and cook every order twice; the in-memory store gives them nothing to
   coordinate through. Scaling out needs MQTT shared subscriptions plus the
-  persistence work in [FUTURE-WORK.md](FUTURE-WORK.md) §4.
+  persistence work in [FUTURE-WORK.md](FUTURE-WORK.md) §5, which covers the four
+  distinct blockers and the two viable designs.
 - `[code:135] Not authorized` in the logs means the credential is wrong, not the
   network. Check the username for typos first.
 
 ---
 
-## 3. Frontend — Cloudflare Pages
+## 3. Frontend — GitHub Pages
 
-Connect the repo and configure:
+One repository setting, done once:
 
-- **Build command:** `npm run build`
-- **Build output directory:** `dist`
-- **Root directory:** `frontend`
+**Settings → Pages → Build and deployment → Source: _GitHub Actions_.**
 
-Set these as build-time environment variables in the Pages project:
+That is all. Do not pick "Deploy from a branch" — the workflow uploads an artifact
+and deploys it, so there is no `gh-pages` branch to point at.
 
-```
-VITE_MESSAGING_BACKEND = mqtt
-VITE_MQTT_URL          = wss://<cluster-id>.s1.eu.hivemq.cloud:8884/mqtt
-VITE_MQTT_USERNAME     = web-client
-VITE_MQTT_PASSWORD     = <the web-client password>
-```
+The site lands at `https://<user>.github.io/osensa-demo/`.
 
-Vite inlines `VITE_*` values at build time, so these are **not** runtime secrets —
-they are published. That is expected and is why `web-client` is near-powerless.
-Rotating that password means a rebuild.
+### The subpath matters
+
+Pages serves the project from `/osensa-demo/`, not the domain root, so
+[vite.config.ts](../frontend/vite.config.ts) sets `base` accordingly. Without it the
+HTML loads but every asset request 404s and you get a blank page — the single most
+common GitHub Pages mistake.
+
+The `base` is keyed on Vite's `mode`, not its `command`, deliberately: `vite preview`
+runs with command `serve` but mode `production`, and it serves already-built output
+whose asset URLs already carry the prefix. Keying on `command` would make preview
+serve from `/` while the HTML asks for `/osensa-demo/...` — breaking the one place
+you would try to catch a base-path mistake before deploying.
+
+Deploying to a root-served host instead means changing that `base` to `'/'`.
+
+### Build-time configuration
+
+The `VITE_*` values come from repository secrets (see §4) and are inlined by Vite at
+build time, so they are **not** runtime secrets — they are published in the bundle.
+That is expected, and is why `web-client` is deliberately near-powerless. Rotating
+that password requires a rebuild, not just a config change.
 
 ---
 
@@ -130,12 +143,14 @@ Settings → Secrets and variables → Actions:
 
 | Secret | Where to get it |
 | --- | --- |
-| `FLY_API_TOKEN` | `fly tokens create deploy` |
-| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → API Tokens → *Edit Cloudflare Workers* template |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard sidebar |
+| `FLY_API_TOKEN` | `fly tokens create deploy -a osensa-demo` — scope it to the app you actually deploy, or the job fails on permissions |
 | `VITE_MQTT_URL` | `wss://<cluster-id>.s1.eu.hivemq.cloud:8884/mqtt` |
 | `VITE_MQTT_USERNAME` | the `web-client` credential |
 | `VITE_MQTT_PASSWORD` | the `web-client` password |
+
+Four, not six: GitHub Pages needs no API token. The deploy job authenticates with
+the built-in `GITHUB_TOKEN` through OIDC, which is why it carries `pages: write` and
+`id-token: write` **scoped to that job** rather than granted workflow-wide.
 
 The three `VITE_*` values are compiled into the public bundle and are therefore not
 secret in any meaningful sense. They live in secrets to keep the cluster URL out of
@@ -146,9 +161,13 @@ The workflow **fails fast if `VITE_MQTT_URL` is missing**. Without that check th
 build would succeed and quietly ship a bundle pointing at `ws://localhost:9001`: a
 completely broken deploy behind a green tick.
 
-> **Do not also connect Cloudflare Pages' own Git integration.** It would build and
-> deploy the same commit a second time, bypassing the test gate, and the two
-> deployments would race. Pick one — this pipeline, or Pages' built-in builds.
+> **Set the Pages source to "GitHub Actions", not "Deploy from a branch".** The
+> branch mode would serve repository files directly, bypassing the build entirely —
+> so it would publish TypeScript and Svelte sources instead of a bundle.
+
+The Pages job overrides the workflow-level `concurrency`, which cancels in-progress
+runs. Cancelling a Pages deployment mid-update can leave the environment in a
+half-applied state, so that job queues rather than cancels.
 
 ### One-time setup before the first automated deploy
 
@@ -156,12 +175,11 @@ The Fly app and its secrets must exist first; the workflow deploys, it does not
 provision:
 
 ```bash
-cd backend && fly launch --no-deploy --copy-config --name osensa-restaurant-kitchen
+cd backend && fly launch --no-deploy --copy-config --name osensa-demo
 ```
 
-The Cloudflare Pages project must also exist with a matching name
-(`osensa-restaurant`), created as a **direct-upload** project rather than a
-Git-connected one.
+For the frontend, set **Settings → Pages → Source** to _GitHub Actions_ once. There
+is no project to create.
 
 ---
 
@@ -176,7 +194,7 @@ Worth doing all four, in order — each checks something the previous one does n
 3. **Open a second window.** It shows the in-flight order it never placed. This is
    the multi-client requirement — the two windows never talk to each other, they
    both render broker state.
-4. **Stop the kitchen** (`fly apps restart osensa-restaurant-kitchen`). Within
+4. **Stop the kitchen** (`fly apps restart osensa-demo`). Within
    seconds every browser shows "kitchen offline" and hides its tables, then
    recovers on its own when the machine comes back. That is the Last Will and the
    reconnect resync working together, and it is the most convincing thing to
@@ -184,7 +202,71 @@ Worth doing all four, in order — each checks something the previous one does n
 
 ---
 
-## 6. Self-hosted alternative
+## 6. Troubleshooting
+
+Four failure modes hit while deploying this, and how to tell them apart. All of them
+look like "the kitchen will not connect", so the distinguishing detail matters.
+
+**`[Errno 111] Connection refused`, repeating every 3 seconds**
+
+`RESTAURANT_BROKER_HOST` is not reaching the process, so it falls back to its
+default of `localhost` and dials a broker that does not exist inside the container.
+Note it is *refused*, not *rejected*: the address is wrong, not the credentials.
+
+```bash
+fly secrets list -a osensa-demo
+```
+
+An empty list, or secrets marked `Staged` on a *different* app, is the cause. Fly
+apps each have their own secrets; setting them on one app does nothing for another.
+
+**`instance refused connection. is your app listening on 0.0.0.0:8080?`**
+
+The app config contains an `http_service` block, which `fly launch` adds by default.
+It breaks a worker twice over: Fly health-checks a port nothing listens on and
+reboots the machine in a loop, and `auto_stop_machines` with
+`min_machines_running = 0` stops the machine whenever no HTTP traffic arrives —
+which for this app is always. Check with:
+
+```bash
+fly config show -a osensa-demo
+```
+
+Remove the block and redeploy. [fly.toml](../backend/fly.toml) deliberately has none.
+
+**`[code:135] Not authorized`**
+
+The credentials are wrong. This is an MQTT CONNACK code, so the network path is
+fine and the broker actively refused the identity. Check the username for typos
+before anything else.
+
+**`Disconnected during message iteration`, connecting and dropping every ~3 seconds**
+
+More than one instance is running. Every instance uses the same MQTT client
+identifier, and a broker evicts an existing session when a duplicate id connects, so
+two machines kick each other off indefinitely. The giveaway is `fly deploy` or
+`fly secrets set` reporting `[1/2]` and `[2/2]`.
+
+```bash
+fly machines list -a osensa-demo
+fly scale count 1 -a osensa-demo
+```
+
+Note the `[[vm]]` block in `fly.toml` does **not** control this — it sets machine
+size, while the count is separate state on Fly's side, and Fly provisions two by
+default. Confirm the fix by watching the broker rather than the logs: subscribe to
+`restaurant/kitchen/status` and you should receive exactly one retained `ONLINE` and
+then silence. Repeated status messages mean it is still flapping.
+
+**Deploys go to an app you are not looking at**
+
+`fly deploy` uses the `app` key in `fly.toml`, while `fly logs -a NAME` uses whatever
+you type. If those disagree you will be reading a healthy app's logs while a
+different one fails, or vice versa. Keep one app and let `fly.toml` name it.
+
+---
+
+## 7. Self-hosted alternative
 
 Committed for the case where the broker must live next to the hardware rather than
 in a cloud region:

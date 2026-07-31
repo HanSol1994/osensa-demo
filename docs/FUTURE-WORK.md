@@ -81,7 +81,127 @@ The real work is not the class, it is what persistence forces:
 - Cooking timers must be recovered on startup: an order left `COOKING` by a crash
   needs either resumption or transition to `FAILED`.
 
-## 5. A second transport (REST, SSE) alongside MQTT
+## 5. Running more than one kitchen instance
+
+Today the system requires **exactly one** kitchen. That is enforced operationally
+(`fly scale count 1`) rather than by the design, and it is not a theoretical
+concern: running two instances was tried by accident during deployment and produced
+an immediate, total outage. Worth documenting properly, because the failure is
+instructive and the fix is not a config flag.
+
+### What breaks, and why
+
+Four independent blockers, in the order they bite:
+
+**1. Duplicate MQTT client identifier.** Every instance connects as
+`restaurant-kitchen`. A broker evicts an existing session when a duplicate id
+connects, so two instances kick each other off every few seconds indefinitely.
+Nothing works at all. This one is trivially fixed — derive the id from the hostname
+or machine id — but fixing it only reveals the next three.
+
+**2. Standard MQTT subscriptions are broadcast, not load-balanced.** Both instances
+subscribe to `restaurant/table/+/order`, so both receive *every* order and cook it
+twice. The customer gets two dishes, and the idempotency key does not help because
+each instance keeps its dedupe cache in its own memory.
+
+**3. State is per-process.** Each instance has its own store, its own `epoch`, and
+its own `version` counters. Both publish to the same retained
+`restaurant/table/N/state` topics with conflicting epochs, so clients accept
+whichever arrived last and the UI thrashes between two versions of reality.
+
+**4. Cooking timers live inside the process that accepted the order.** The timer is
+an `asyncio.sleep` in one instance. If that instance dies mid-cook, the order stays
+`COOKING` forever — no other instance knows it exists, and the retained state
+advertises a dish that will never arrive. Today a whole-process restart clears this
+because state is in memory; with shared state it becomes a permanent inconsistency.
+
+### First, decide what scaling is *for*
+
+This matters more than the mechanism. The kitchen's "work" is
+`await asyncio.sleep(10..30)` — it consumes almost no CPU, and a single small
+instance handles far more orders than a restaurant simulation will ever produce.
+
+So **horizontal scaling here buys availability, not throughput.** Naming that goal
+changes the answer, because the cheap design solves availability and the expensive
+one solves throughput nobody needs.
+
+### Design A — active/passive with a leader lock (recommended)
+
+One instance works; the others idle until it dies.
+
+- All instances connect (with unique client ids) but only the leader subscribes to
+  the order topic.
+- Leadership is a lease in Redis or Postgres — `SET key NX PX 10000` refreshed every
+  few seconds. Lose the lease, unsubscribe and stop cooking.
+- A standby that acquires the lease subscribes, then republishes retained state.
+
+This sidesteps blockers 2, 3 and 4 entirely: there is still only ever one writer,
+one epoch, and one set of timers. The trade-off is a failover gap of roughly the
+lease TTL, during which no orders are accepted — but the browser already handles
+that correctly, because the kitchen's Last Will marks it offline and the UI hides the
+tables until it returns.
+
+Cost: a lock backend and maybe 80 lines. No change to the wire contract.
+
+### Design B — active/active partitioned by table
+
+If throughput ever genuinely matters:
+
+- **MQTT 5 shared subscriptions** — subscribe to
+  `$share/kitchens/restaurant/table/+/order` so the broker delivers each order to
+  exactly one member of the group. Note this requires moving the backend from MQTT
+  3.1.1 to MQTT 5 (the browser can stay on 3.1.1), and broker support is uneven —
+  HiveMQ and EMQX implement it; verify before relying on it.
+- **Partition by `tableId`**, via consistent hashing over the instance set. This is
+  the load-bearing idea: if a table is always handled by the same instance, then that
+  instance is the only writer for that table's retained topic, the only one checking
+  its capacity limit, and the only one holding its timers. Blockers 2, 3 and 4 all
+  reduce to "one owner per table" rather than needing distributed coordination.
+- Without partitioning, shared subscriptions alone are not enough: two orders for
+  the same table could be processed concurrently on different instances and both pass
+  a capacity check that only one should.
+
+### Regardless of design, these become necessary
+
+- **Shared, async `Store`.** The `Store` protocol is the seam, but see §4 — the
+  synchronous store's free atomicity is exactly what is lost. `_try_accept` currently
+  does capacity check, dedupe check, and insert as one uninterruptible step. Across
+  instances that has to become a single atomic operation: a Redis Lua script, or one
+  SQL statement, or a `SERIALIZABLE` transaction.
+- **Atomic version counters.** `version` must increment monotonically per table
+  across all instances — a Redis `INCR` or a database sequence, not `+= 1` in memory.
+- **`epoch` moves into the store.** It currently identifies a *process generation*.
+  With shared state it must identify a *state generation*, otherwise every instance
+  announces a different epoch and clients treat each other's updates as a fresh
+  kitchen. This is a contract-semantics change, not just an implementation one.
+- **Shared dedupe.** The idempotency key must be checked in shared state, atomically
+  with the insert — `INSERT ... ON CONFLICT DO NOTHING` and inspect the row count, or
+  `SET key NX`. An in-process LRU is worse than useless once a redelivery can land on
+  a different instance.
+- **Durable timers with recovery.** Persist `expectedReadyAt` (already in the
+  contract) and add a sweeper that claims overdue orders whose owner's lease has
+  expired — `SELECT ... FOR UPDATE SKIP LOCKED` is the standard shape. This is the
+  pleasing part: because `expectedReadyAt` is already published, *any* instance can
+  determine that an order is due, so completion stops depending on which process
+  accepted it.
+- **Observability of ownership.** Log which instance owns which tables, and alert on
+  reconnect rate. A duplicate-id eviction loop is invisible in aggregate metrics but
+  obvious in a per-instance reconnect count — that is how the accidental two-instance
+  outage was actually diagnosed.
+
+### Suggested order
+
+1. Unique client id per instance. Small, and removes the catastrophic failure mode
+   even if nothing else changes.
+2. Shared store with atomic version and dedupe (§4 first — this depends on it).
+3. Move `epoch` into the store.
+4. Durable timers plus the overdue sweeper.
+5. Leader lock (Design A). Stop here unless throughput is measured to be a problem.
+6. Only then: MQTT 5, shared subscriptions, and table partitioning (Design B).
+
+---
+
+## 6. A second transport (REST, SSE) alongside MQTT
 
 The assignment forbids REST, so MQTT is the only transport implemented. The code is
 structured so this is additive rather than invasive: `Transport` is a Protocol,
@@ -149,7 +269,7 @@ it. If the feature were "show today's menu," REST would win outright. It is the
 *server-initiated, multi-subscriber, state-change-stream* shape that makes it the
 wrong tool here — which is presumably why the assignment forbids it.
 
-## 6. Generate types from one schema
+## 7. Generate types from one schema
 
 `frontend/src/lib/types.ts` and `backend/src/restaurant/models.py` describe the
 same wire format, maintained by hand. They can drift, and only a runtime failure
@@ -160,7 +280,7 @@ TypeScript from that, with a CI check that the committed output is current. The
 runtime validators in `types.ts` stay regardless — generated types still vanish at
 runtime, and inbound data is still untrusted.
 
-## 7. Observability
+## 8. Observability
 
 Structured JSON logs exist. Missing:
 
@@ -172,7 +292,7 @@ Structured JSON logs exist. Missing:
 - **Health endpoint** — the kitchen has no way to report readiness, which most
   deployment platforms want.
 
-## 8. UI improvements
+## 9. UI improvements
 
 - Show remaining time rather than elapsed. Needs `expectedReadyAt` in the
   contract; deliberately not added, because the kitchen makes no promise about
@@ -185,7 +305,7 @@ Structured JSON logs exist. Missing:
 - Clear served dishes ("plate cleared") — needs a new inbound command and an ACL
   entry for it.
 
-## 9. Testing gaps
+## 10. Testing gaps
 
 - Property-based tests over the reducer (`applyTableState`) for arbitrary
   version/epoch orderings — the invariant is small and total, which suits

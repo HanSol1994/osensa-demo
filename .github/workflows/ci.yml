@@ -107,11 +107,29 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
   deploy-frontend:
-    name: Deploy frontend to Cloudflare Pages
+    name: Deploy frontend to GitHub Pages
     needs: [backend, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: production
+
+    # Scoped to this job rather than raised globally: only the deployment needs to
+    # write Pages or mint an OIDC token, and the check jobs should not be able to.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    # Overrides the workflow-level concurrency, which cancels in progress. A
+    # cancelled Pages deployment can leave the environment mid-update, so this one
+    # queues instead.
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -147,9 +165,11 @@ jobs:
           VITE_MQTT_PASSWORD: ${{ secrets.VITE_MQTT_PASSWORD }}
         run: npm run build
 
-      - uses: cloudflare/wrangler-action@v3
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: frontend
-          command: pages deploy dist --project-name=osensa-restaurant --branch=main
+          path: frontend/dist
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
