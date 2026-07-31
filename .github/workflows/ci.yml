@@ -10,11 +10,16 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same branch makes an in-flight run obsolete. Cancelling
-# avoids two deploys racing to publish different commits.
+# Cancel superseded runs on branches and pull requests, but never on main.
+#
+# A main run may be part-way through a deploy, and cancelling one is actively
+# harmful: `flyctl deploy` had already acquired a machine lease when a later push
+# cancelled the run, leaving the deploy half-applied and the lease held. Job-level
+# concurrency cannot prevent this, because workflow-level cancellation kills the
+# whole run regardless. So main runs queue behind each other instead.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   backend:
