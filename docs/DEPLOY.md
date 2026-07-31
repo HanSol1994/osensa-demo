@@ -7,7 +7,7 @@ first.
 | --- | --- | --- |
 | MQTT broker | HiveMQ Cloud (free tier) | Gives `wss://` with a valid certificate, auth, and per-credential topic permissions. Getting TLS right on a self-hosted broker is the single most time-expensive part of this otherwise. |
 | Kitchen (Python) | Fly.io | Needs a long-running process, not a serverless function. Render's free web tier sleeps; Fly keeps a small machine up. |
-| Frontend (Svelte) | Cloudflare Pages | Static build output. Free, instant, and global. |
+| Frontend (Svelte) | GitHub Pages | Static build output, and the repository is already here. No extra account and no API tokens — the workflow authenticates with the built-in `GITHUB_TOKEN` via OIDC, which removes three secrets compared with an external host. |
 
 Self-hosting the broker instead is fully supported — see
 [deploy/mosquitto.conf](../deploy/mosquitto.conf),
@@ -91,26 +91,38 @@ Then `restaurant_state` snapshots follow every transition.
 
 ---
 
-## 3. Frontend — Cloudflare Pages
+## 3. Frontend — GitHub Pages
 
-Connect the repo and configure:
+One repository setting, done once:
 
-- **Build command:** `npm run build`
-- **Build output directory:** `dist`
-- **Root directory:** `frontend`
+**Settings → Pages → Build and deployment → Source: _GitHub Actions_.**
 
-Set these as build-time environment variables in the Pages project:
+That is all. Do not pick "Deploy from a branch" — the workflow uploads an artifact
+and deploys it, so there is no `gh-pages` branch to point at.
 
-```
-VITE_MESSAGING_BACKEND = mqtt
-VITE_MQTT_URL          = wss://<cluster-id>.s1.eu.hivemq.cloud:8884/mqtt
-VITE_MQTT_USERNAME     = web-client
-VITE_MQTT_PASSWORD     = <the web-client password>
-```
+The site lands at `https://<user>.github.io/osensa-demo/`.
 
-Vite inlines `VITE_*` values at build time, so these are **not** runtime secrets —
-they are published. That is expected and is why `web-client` is near-powerless.
-Rotating that password means a rebuild.
+### The subpath matters
+
+Pages serves the project from `/osensa-demo/`, not the domain root, so
+[vite.config.ts](../frontend/vite.config.ts) sets `base` accordingly. Without it the
+HTML loads but every asset request 404s and you get a blank page — the single most
+common GitHub Pages mistake.
+
+The `base` is keyed on Vite's `mode`, not its `command`, deliberately: `vite preview`
+runs with command `serve` but mode `production`, and it serves already-built output
+whose asset URLs already carry the prefix. Keying on `command` would make preview
+serve from `/` while the HTML asks for `/osensa-demo/...` — breaking the one place
+you would try to catch a base-path mistake before deploying.
+
+Deploying to a root-served host instead means changing that `base` to `'/'`.
+
+### Build-time configuration
+
+The `VITE_*` values come from repository secrets (see §4) and are inlined by Vite at
+build time, so they are **not** runtime secrets — they are published in the bundle.
+That is expected, and is why `web-client` is deliberately near-powerless. Rotating
+that password requires a rebuild, not just a config change.
 
 ---
 
@@ -131,12 +143,14 @@ Settings → Secrets and variables → Actions:
 
 | Secret | Where to get it |
 | --- | --- |
-| `FLY_API_TOKEN` | `fly tokens create deploy` |
-| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → API Tokens → *Edit Cloudflare Workers* template |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard sidebar |
+| `FLY_API_TOKEN` | `fly tokens create deploy -a osensa-demo` — scope it to the app you actually deploy, or the job fails on permissions |
 | `VITE_MQTT_URL` | `wss://<cluster-id>.s1.eu.hivemq.cloud:8884/mqtt` |
 | `VITE_MQTT_USERNAME` | the `web-client` credential |
 | `VITE_MQTT_PASSWORD` | the `web-client` password |
+
+Four, not six: GitHub Pages needs no API token. The deploy job authenticates with
+the built-in `GITHUB_TOKEN` through OIDC, which is why it carries `pages: write` and
+`id-token: write` **scoped to that job** rather than granted workflow-wide.
 
 The three `VITE_*` values are compiled into the public bundle and are therefore not
 secret in any meaningful sense. They live in secrets to keep the cluster URL out of
@@ -147,9 +161,13 @@ The workflow **fails fast if `VITE_MQTT_URL` is missing**. Without that check th
 build would succeed and quietly ship a bundle pointing at `ws://localhost:9001`: a
 completely broken deploy behind a green tick.
 
-> **Do not also connect Cloudflare Pages' own Git integration.** It would build and
-> deploy the same commit a second time, bypassing the test gate, and the two
-> deployments would race. Pick one — this pipeline, or Pages' built-in builds.
+> **Set the Pages source to "GitHub Actions", not "Deploy from a branch".** The
+> branch mode would serve repository files directly, bypassing the build entirely —
+> so it would publish TypeScript and Svelte sources instead of a bundle.
+
+The Pages job overrides the workflow-level `concurrency`, which cancels in-progress
+runs. Cancelling a Pages deployment mid-update can leave the environment in a
+half-applied state, so that job queues rather than cancels.
 
 ### One-time setup before the first automated deploy
 
@@ -160,9 +178,8 @@ provision:
 cd backend && fly launch --no-deploy --copy-config --name osensa-demo
 ```
 
-The Cloudflare Pages project must also exist with a matching name
-(`osensa-restaurant`), created as a **direct-upload** project rather than a
-Git-connected one.
+For the frontend, set **Settings → Pages → Source** to _GitHub Actions_ once. There
+is no project to create.
 
 ---
 
