@@ -1,0 +1,12 @@
+# Normalise line endings so the repository is the single source of truth rather
+# than each contributor's core.autocrlf setting.
+#
+# LF everywhere, including Windows working copies. The alternative (CRLF on
+# checkout) means a file edited on Windows and executed on Linux — the systemd
+# unit, the Mosquitto config, anything CI runs — can carry \r into places that
+# treat it as part of a value.
+* text=auto eol=lf
+
+# Lockfiles are generated; collapsing them in diffs keeps review focused on
+# hand-written changes.
+package-lock.json linguist-generated=true -diff
