@@ -13,7 +13,7 @@
 
 [Unit]
 Description=Restaurant kitchen (MQTT event consumer)
-Documentation=https://github.com/OWNER/osensa-restaurant
+Documentation=https://github.com/HanSol1994/osensa-demo
 # network-online rather than network: the process dials the broker at startup, and
 # `network.target` only means the stack is configured, not that it is reachable.
 # The supervised reconnect loop would recover anyway, but starting cleanly is nicer
