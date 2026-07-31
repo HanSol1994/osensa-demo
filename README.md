@@ -7,6 +7,21 @@ is ready — across every open browser window.
 **Frontend:** Svelte 5 + TypeScript · **Backend:** Python + asyncio ·
 **Transport:** MQTT over WebSockets only, no REST anywhere.
 
+## Live demo
+
+| | |
+| --- | --- |
+| Frontend | <https://hansol1994.github.io/osensa-demo/> |
+| Kitchen | Fly.io (`osensa-demo`), connects outbound only — no public URL by design |
+| Broker | HiveMQ Cloud, `wss` on 8884 |
+
+Worth trying: open it in **two browser windows**. Order in one and it appears in the
+other, because neither window talks to the other — they both render broker state.
+
+If the header shows **kitchen offline**, the backend is not running; the UI hides the
+tables deliberately, because their last known state is no longer live. Everything runs
+locally with no accounts — see below.
+
 ---
 
 ## Running it locally
@@ -126,8 +141,15 @@ The full message contract — topics, payloads, QoS, retention, state machine �
 in **[docs/EVENT-CONTRACT.md](docs/EVENT-CONTRACT.md)**. In an event-driven system
 that document *is* the architecture; both sides just implement it.
 
-Other docs: [SECURITY.md](docs/SECURITY.md) ·
-[FUTURE-WORK.md](docs/FUTURE-WORK.md) · [DEPLOY.md](docs/DEPLOY.md)
+Other docs:
+
+| Document | What it covers |
+| --- | --- |
+| [EVENT-CONTRACT.md](docs/EVENT-CONTRACT.md) | Topics, payloads, QoS, retention, state machine — the architecture |
+| [SECURITY.md](docs/SECURITY.md) | Threat model, broker ACLs, what is deliberately accepted |
+| [FUTURE-WORK.md](docs/FUTURE-WORK.md) | What to build next, including what horizontal scaling would require |
+| [DEPLOY.md](docs/DEPLOY.md) | Hosting, CI/CD, and a troubleshooting guide per failure mode |
+| [INCIDENTS.md](docs/INCIDENTS.md) | Every non-trivial problem hit while building this, and how it was diagnosed |
 
 ---
 

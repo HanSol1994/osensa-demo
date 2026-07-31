@@ -148,9 +148,10 @@ Settings → Secrets and variables → Actions:
 | `VITE_MQTT_USERNAME` | the `web-client` credential |
 | `VITE_MQTT_PASSWORD` | the `web-client` password |
 
-Four, not six: GitHub Pages needs no API token. The deploy job authenticates with
-the built-in `GITHUB_TOKEN` through OIDC, which is why it carries `pages: write` and
-`id-token: write` **scoped to that job** rather than granted workflow-wide.
+Only four, because GitHub Pages needs no API token or account id. The deploy job
+authenticates with the built-in `GITHUB_TOKEN` through OIDC, which is why it carries
+`pages: write` and `id-token: write` **scoped to that job** rather than granted
+workflow-wide.
 
 The three `VITE_*` values are compiled into the public bundle and are therefore not
 secret in any meaningful sense. They live in secrets to keep the cluster URL out of
@@ -257,6 +258,56 @@ size, while the count is separate state on Fly's side, and Fly provisions two by
 default. Confirm the fix by watching the broker rather than the logs: subscribe to
 `restaurant/kitchen/status` and you should receive exactly one retained `ONLINE` and
 then silence. Repeated status messages mean it is still flapping.
+
+**The machine keeps stopping after about five minutes**
+
+Two completely different causes produce the same interval, and they are told apart by
+*who* stopped it:
+
+```bash
+fly machine status <id> -a osensa-demo    # look at the SOURCE column
+```
+
+- `SOURCE = runner` with a log line `Trial machine stopping` — a Fly trial account
+  limit, unrelated to this app's configuration.
+- `SOURCE = proxy`, preceded by `cordon` and with **no** trial log line — Fly's
+  `auto_stop_machines`, i.e. the `http_service` block is still present in the
+  **machine's** config. Verify with:
+
+```bash
+fly machines list -a osensa-demo --json
+```
+
+and look for `config.services`. Editing `fly.toml` is not enough — the machine keeps
+its existing config until a deploy actually lands.
+
+**`Error: unauthorized` from flyctl in CI**
+
+The `FLY_API_TOKEN` is scoped to a different app than the one being deployed — easy
+to hit if the token was created while `fly.toml` named another app, and guaranteed if
+that app has since been destroyed. Regenerate it against the right app and update the
+repository secret.
+
+**`Error: The operation was canceled` part-way through a deploy**
+
+A newer push cancelled the run. If it had already reached `Acquiring lease`, the
+deploy is half-applied and the lease may still be held. This is why the workflow's
+`cancel-in-progress` is conditional on the ref — `main` runs queue instead of
+cancelling, because job-level concurrency cannot protect a job from workflow-level
+cancellation.
+
+**`Get Pages site failed … Not Found` from configure-pages**
+
+GitHub Pages has never been enabled on the repository. `enablement: true` (already
+set) turns it on through the API; failing that, set **Settings → Pages → Source** to
+_GitHub Actions_ manually.
+
+**Deploy jobs are skipped even though the checks pass**
+
+The run was triggered by something the deploy condition excludes. A
+`workflow_dispatch` run is not a `push`, so a condition testing only
+`github.event_name == 'push'` silently skips both deploys while every check goes
+green. Look at the run's trigger before suspecting the jobs themselves.
 
 **Deploys go to an app you are not looking at**
 
