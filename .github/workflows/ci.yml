@@ -89,7 +89,11 @@ jobs:
     # Both halves gate both deploys. They share a wire contract, so shipping one
     # side while the other is broken is worse than not shipping at all.
     needs: [backend, frontend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Deploy on a push to main, or on a manual run — but only ever from main, so a
+    # manually dispatched run on a feature branch cannot ship it.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -109,7 +113,11 @@ jobs:
   deploy-frontend:
     name: Deploy frontend to GitHub Pages
     needs: [backend, frontend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Deploy on a push to main, or on a manual run — but only ever from main, so a
+    # manually dispatched run on a feature branch cannot ship it.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
 
     # Scoped to this job rather than raised globally: only the deployment needs to
@@ -165,7 +173,13 @@ jobs:
           VITE_MQTT_PASSWORD: ${{ secrets.VITE_MQTT_PASSWORD }}
         run: npm run build
 
+      # enablement: true turns Pages on via the API if it is not already enabled,
+      # instead of failing with "Get Pages site failed" and requiring someone to
+      # click through repository settings first. It makes the pipeline
+      # self-provisioning, so a fresh clone of this repo deploys without manual setup.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
