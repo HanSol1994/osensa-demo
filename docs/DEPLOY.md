@@ -84,7 +84,8 @@ Then `restaurant_state` snapshots follow every transition.
 - **Exactly one machine.** Two kitchens on one broker would both consume the order
   topic and cook every order twice; the in-memory store gives them nothing to
   coordinate through. Scaling out needs MQTT shared subscriptions plus the
-  persistence work in [FUTURE-WORK.md](FUTURE-WORK.md) §4.
+  persistence work in [FUTURE-WORK.md](FUTURE-WORK.md) §5, which covers the four
+  distinct blockers and the two viable designs.
 - `[code:135] Not authorized` in the logs means the credential is wrong, not the
   network. Check the username for typos first.
 

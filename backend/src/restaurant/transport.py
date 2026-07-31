@@ -5,7 +5,7 @@ messages and is *driven* by a ``Transport`` for inbound ones, so the entire doma
 is transport-agnostic and testable with no broker.
 
 ``create_transport`` is the factory. Adding a second transport (see
-docs/FUTURE-WORK.md §5) means writing one class and adding one case here; no
+docs/FUTURE-WORK.md §6) means writing one class and adding one case here; no
 domain code changes. One honest caveat recorded there: a request/response
 transport such as REST is a poor fit for the server-initiated FOOD event, so the
 abstraction makes substitution *possible*, not automatically *appropriate*.
