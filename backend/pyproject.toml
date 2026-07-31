@@ -1,0 +1,64 @@
+[project]
+name = "restaurant-backend"
+version = "1.0.0"
+description = "Event-driven restaurant kitchen service (MQTT over WebSockets, asyncio)"
+requires-python = ">=3.11"
+dependencies = [
+    "aiomqtt>=2.3.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    # A hanging async test is a bug, not something to wait out; this turns a hang
+    # into a failure with a traceback.
+    "pytest-timeout>=2.3",
+    # Pure-Python MQTT broker with a WebSocket listener. Used both as the local
+    # dev broker (no Docker required) and to spin up a real broker in-process for
+    # integration tests, so CI needs no external services.
+    "amqtt>=0.11",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# "." makes the dev-only `tools` package importable from tests without installing it.
+pythonpath = ["src", "."]
+asyncio_mode = "auto"
+# Any test that hangs on a broker or a task is a bug, not a reason to wait.
+timeout = 30
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# S101      - assert is the entire point of a test file.
+# ASYNC109  - a `timeout` argument is part of the polling helper's contract; the
+#             rule's suggestion (asyncio.timeout at the call site) is what the
+#             helper already uses internally.
+# ASYNC110  - the rule suggests asyncio.Event instead of sleeping in a loop, which
+#             would require production code to signal readiness. These helpers poll
+#             an arbitrary predicate, so there is nothing to wait on.
+"tests/*" = ["S101", "ASYNC109", "ASYNC110"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["restaurant"]
+mypy_path = "src"
