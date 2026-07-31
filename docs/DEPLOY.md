@@ -48,7 +48,7 @@ walkthrough, and say so out loud rather than leaving it undocumented.
 
 ```bash
 cd backend
-fly launch --no-deploy --copy-config --name osensa-restaurant-kitchen
+fly launch --no-deploy --copy-config --name osensa-demo
 ```
 
 Set the broker identity as secrets so none of it lands in git:
@@ -156,7 +156,7 @@ The Fly app and its secrets must exist first; the workflow deploys, it does not
 provision:
 
 ```bash
-cd backend && fly launch --no-deploy --copy-config --name osensa-restaurant-kitchen
+cd backend && fly launch --no-deploy --copy-config --name osensa-demo
 ```
 
 The Cloudflare Pages project must also exist with a matching name
@@ -176,7 +176,7 @@ Worth doing all four, in order — each checks something the previous one does n
 3. **Open a second window.** It shows the in-flight order it never placed. This is
    the multi-client requirement — the two windows never talk to each other, they
    both render broker state.
-4. **Stop the kitchen** (`fly apps restart osensa-restaurant-kitchen`). Within
+4. **Stop the kitchen** (`fly apps restart osensa-demo`). Within
    seconds every browser shows "kitchen offline" and hides its tables, then
    recovers on its own when the machine comes back. That is the Last Will and the
    reconnect resync working together, and it is the most convincing thing to
@@ -184,7 +184,53 @@ Worth doing all four, in order — each checks something the previous one does n
 
 ---
 
-## 6. Self-hosted alternative
+## 6. Troubleshooting
+
+Four failure modes hit while deploying this, and how to tell them apart. All of them
+look like "the kitchen will not connect", so the distinguishing detail matters.
+
+**`[Errno 111] Connection refused`, repeating every 3 seconds**
+
+`RESTAURANT_BROKER_HOST` is not reaching the process, so it falls back to its
+default of `localhost` and dials a broker that does not exist inside the container.
+Note it is *refused*, not *rejected*: the address is wrong, not the credentials.
+
+```bash
+fly secrets list -a osensa-demo
+```
+
+An empty list, or secrets marked `Staged` on a *different* app, is the cause. Fly
+apps each have their own secrets; setting them on one app does nothing for another.
+
+**`instance refused connection. is your app listening on 0.0.0.0:8080?`**
+
+The app config contains an `http_service` block, which `fly launch` adds by default.
+It breaks a worker twice over: Fly health-checks a port nothing listens on and
+reboots the machine in a loop, and `auto_stop_machines` with
+`min_machines_running = 0` stops the machine whenever no HTTP traffic arrives —
+which for this app is always. Check with:
+
+```bash
+fly config show -a osensa-demo
+```
+
+Remove the block and redeploy. [fly.toml](../backend/fly.toml) deliberately has none.
+
+**`[code:135] Not authorized`**
+
+The credentials are wrong. This is an MQTT CONNACK code, so the network path is
+fine and the broker actively refused the identity. Check the username for typos
+before anything else.
+
+**Deploys go to an app you are not looking at**
+
+`fly deploy` uses the `app` key in `fly.toml`, while `fly logs -a NAME` uses whatever
+you type. If those disagree you will be reading a healthy app's logs while a
+different one fails, or vice versa. Keep one app and let `fly.toml` name it.
+
+---
+
+## 7. Self-hosted alternative
 
 Committed for the case where the broker must live next to the hardware rather than
 in a cloud region:

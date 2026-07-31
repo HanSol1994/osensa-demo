@@ -1,44 +1,55 @@
 # Fly.io config for the kitchen service.
 #
-# Note what is absent: there is no [http_service] and no exposed port. The kitchen
-# is an MQTT client that dials out to the broker, so it needs no inbound
-# networking. That also means Fly's HTTP health checks do not apply — liveness is
-# visible in the logs (`broker_connected`) and, to clients, in the retained
-# kitchen status topic backed by the MQTT Last Will.
+# Note what is deliberately ABSENT: there is no [http_service] and no exposed
+# port. The kitchen is an MQTT client that dials out to the broker; it listens on
+# nothing.
+#
+# `fly launch` adds an http_service by default, which breaks this app in two ways:
+#   1. Fly health-checks the internal port, gets no listener, and reboots the
+#      machine in a loop.
+#   2. With auto_stop_machines and min_machines_running = 0, Fly stops the machine
+#      whenever no HTTP traffic arrives — which, for a worker that never receives
+#      HTTP, means always.
+# If you re-run `fly launch`, delete the generated http_service block again.
+#
+# Liveness is visible in the logs (`broker_connected`) and, to clients, through the
+# retained kitchen status topic backed by the MQTT Last Will.
 
-app = "osensa-restaurant-kitchen"
-primary_region = "ams"  # close to the eu HiveMQ cluster; keeps round trips short
+app = 'osensa-demo'
+primary_region = 'ams'  # close to the eu HiveMQ cluster; keeps round trips short
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
-# Non-secret configuration. Anything identifying or authenticating the broker is
-# set with `fly secrets set` instead, so it stays out of the repository.
-[env]
-  RESTAURANT_BROKER_PORT = "8884"
-  RESTAURANT_BROKER_TRANSPORT = "websockets"
-  RESTAURANT_BROKER_WS_PATH = "/mqtt"
-  RESTAURANT_BROKER_USE_TLS = "true"
-
-  RESTAURANT_TABLE_COUNT = "4"
-  RESTAURANT_COOK_MIN_SECONDS = "10"
-  RESTAURANT_COOK_MAX_SECONDS = "30"
-
-  RESTAURANT_LOG_FORMAT = "json"
-  RESTAURANT_LOG_LEVEL = "INFO"
-  RESTAURANT_LOG_STATE_SNAPSHOTS = "true"
-
-  # Demo affordance. Turn off if this is ever pointed at something that matters.
-  RESTAURANT_ENABLE_RESET = "true"
-
-[[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
-  cpus = 1
-
-# Exactly one machine. Two kitchens on the same broker would both consume the
-# order topic and each order would be cooked twice — the in-memory store means
-# there is no shared state to coordinate through. Horizontal scaling would need
-# MQTT shared subscriptions plus the persistence work in docs/FUTURE-WORK.md.
 [deploy]
-  strategy = "immediate"
+  strategy = 'immediate'
+
+# Non-secret configuration only. Anything that identifies or authenticates against
+# the broker is set with `fly secrets set`, so it never enters the repository:
+#   RESTAURANT_BROKER_HOST, RESTAURANT_BROKER_USERNAME, RESTAURANT_BROKER_PASSWORD
+#
+# RESTAURANT_BROKER_HOST defaults to "localhost" when unset, so a missing secret
+# shows up as "[Errno 111] Connection refused" rather than as a config error.
+[env]
+  RESTAURANT_BROKER_PORT = '8884'
+  RESTAURANT_BROKER_TRANSPORT = 'websockets'
+  RESTAURANT_BROKER_USE_TLS = 'true'
+  RESTAURANT_BROKER_WS_PATH = '/mqtt'
+  RESTAURANT_COOK_MAX_SECONDS = '30'
+  RESTAURANT_COOK_MIN_SECONDS = '10'
+  RESTAURANT_ENABLE_RESET = 'true'
+  RESTAURANT_LOG_FORMAT = 'json'
+  RESTAURANT_LOG_LEVEL = 'INFO'
+  RESTAURANT_LOG_STATE_SNAPSHOTS = 'true'
+  RESTAURANT_TABLE_COUNT = '4'
+
+# Exactly one machine. Two kitchens on the same broker would both consume the order
+# topic and cook every order twice — the in-memory store gives them nothing to
+# coordinate through. Scaling out needs MQTT shared subscriptions plus the
+# persistence work in docs/FUTURE-WORK.md.
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256
