@@ -1,0 +1,17 @@
+/* Minimal baseline only. The assignment states no styling is required, so this
+   is limited to making state legible rather than making it pretty. */
+
+:root {
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+  color: #222;
+  background: #fafafa;
+}
+
+body {
+  margin: 0;
+}
+
+* {
+  box-sizing: border-box;
+}
