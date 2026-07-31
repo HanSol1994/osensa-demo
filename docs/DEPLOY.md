@@ -222,6 +222,24 @@ The credentials are wrong. This is an MQTT CONNACK code, so the network path is
 fine and the broker actively refused the identity. Check the username for typos
 before anything else.
 
+**`Disconnected during message iteration`, connecting and dropping every ~3 seconds**
+
+More than one instance is running. Every instance uses the same MQTT client
+identifier, and a broker evicts an existing session when a duplicate id connects, so
+two machines kick each other off indefinitely. The giveaway is `fly deploy` or
+`fly secrets set` reporting `[1/2]` and `[2/2]`.
+
+```bash
+fly machines list -a osensa-demo
+fly scale count 1 -a osensa-demo
+```
+
+Note the `[[vm]]` block in `fly.toml` does **not** control this — it sets machine
+size, while the count is separate state on Fly's side, and Fly provisions two by
+default. Confirm the fix by watching the broker rather than the logs: subscribe to
+`restaurant/kitchen/status` and you should receive exactly one retained `ONLINE` and
+then silence. Repeated status messages mean it is still flapping.
+
 **Deploys go to an app you are not looking at**
 
 `fly deploy` uses the `app` key in `fly.toml`, while `fly logs -a NAME` uses whatever

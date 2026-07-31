@@ -46,10 +46,21 @@ primary_region = 'ams'  # close to the eu HiveMQ cluster; keeps round trips shor
   RESTAURANT_LOG_STATE_SNAPSHOTS = 'true'
   RESTAURANT_TABLE_COUNT = '4'
 
-# Exactly one machine. Two kitchens on the same broker would both consume the order
-# topic and cook every order twice — the in-memory store gives them nothing to
-# coordinate through. Scaling out needs MQTT shared subscriptions plus the
-# persistence work in docs/FUTURE-WORK.md.
+# Exactly one machine — and note that this [[vm]] block does NOT enforce that. It
+# describes machine *size*; the count is separate state on Fly's side, and Fly
+# creates two by default. Enforce it with:
+#
+#     fly scale count 1 -a osensa-demo
+#
+# Two instances is not merely wasteful, it is a hard failure. Both connect with the
+# same MQTT client identifier, and brokers evict an existing session when a
+# duplicate id connects — so the two machines kick each other off in a loop, every
+# few seconds, forever. Even if they had distinct ids they would both consume the
+# order topic and cook every order twice, because the in-memory store gives them
+# nothing to coordinate through.
+#
+# Scaling out for real needs MQTT shared subscriptions plus the persistence work in
+# docs/FUTURE-WORK.md.
 [[vm]]
   size = 'shared-cpu-1x'
   memory = '256mb'
